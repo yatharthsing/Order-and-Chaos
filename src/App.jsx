@@ -1,4 +1,5 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { getBestMove } from "./ai"
 
 const EMPTY = null
 const ROWS = 6
@@ -10,17 +11,17 @@ function checkWin(board) {
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
       if (board[r][c] === EMPTY) continue
-      const color = board[r][c]
+      const piece = board[r][c]
       for (let [dr, dc] of directions) {
         let count = 1
         for (let i = 1; i < WIN_LENGTH; i++) {
           const nr = r + dr * i
           const nc = c + dc * i
           if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) break
-          if (board[nr][nc] !== color) break
+          if (board[nr][nc] !== piece) break
           count++
         }
-        if (count >= WIN_LENGTH) return color
+        if (count >= WIN_LENGTH) return piece
       }
     }
   }
@@ -37,13 +38,55 @@ function createBoard() {
 
 export default function App() {
   const [board, setBoard] = useState(createBoard())
-  const [currentPlayer, setCurrentPlayer] = useState(1)
   const [selectedPiece, setSelectedPiece] = useState("O")
   const [winner, setWinner] = useState(null)
   const [isDraw, setIsDraw] = useState(false)
+  const [isAIThinking, setIsAIThinking] = useState(false)
+  // mode: "menu", "human", "ai-order", "ai-chaos"
+  const [mode, setMode] = useState("menu")
+  // whose turn: "human" or "ai"
+  const [turn, setTurn] = useState("human")
+
+  // AI plays whenever it's its turn
+  useEffect(() => {
+    if (turn !== "ai" || winner || isDraw || mode === "human") return
+
+    setIsAIThinking(true)
+    const timeout = setTimeout(() => {
+      const boardCopy = board.map(row => [...row])
+      const isOrderTurn = mode === "ai-order"
+      const move = getBestMove(boardCopy, isOrderTurn)
+
+      if (!move) return
+
+      const newBoard = board.map(row => [...row])
+      newBoard[move.r][move.c] = move.piece
+
+      const winPiece = checkWin(newBoard)
+      if (winPiece) {
+        setBoard(newBoard)
+        setWinner({ player: "AI", piece: winPiece })
+        setIsAIThinking(false)
+        return
+      }
+      if (isBoardFull(newBoard)) {
+        setBoard(newBoard)
+        setIsDraw(true)
+        setIsAIThinking(false)
+        return
+      }
+
+      setBoard(newBoard)
+      setSelectedPiece("O")
+      setTurn("human")
+      setIsAIThinking(false)
+    }, 100)
+
+    return () => clearTimeout(timeout)
+  }, [turn, board, winner, isDraw, mode])
 
   function handleCellClick(r, c) {
-    if (board[r][c] !== EMPTY || winner || isDraw) return
+    if (board[r][c] !== EMPTY || winner || isDraw || isAIThinking || turn !== "human") return
 
     const newBoard = board.map(row => [...row])
     newBoard[r][c] = selectedPiece
@@ -51,10 +94,9 @@ export default function App() {
     const winPiece = checkWin(newBoard)
     if (winPiece) {
       setBoard(newBoard)
-      setWinner({ player: currentPlayer, piece: winPiece })
+      setWinner({ player: "You", piece: winPiece })
       return
     }
-
     if (isBoardFull(newBoard)) {
       setBoard(newBoard)
       setIsDraw(true)
@@ -62,69 +104,104 @@ export default function App() {
     }
 
     setBoard(newBoard)
-    setCurrentPlayer(currentPlayer === 1 ? 2 : 1)
     setSelectedPiece("O")
+
+    if (mode === "human") {
+      // do nothing, same turn logic but switch player label
+    } else {
+      setTurn("ai")
+    }
   }
 
-  function resetGame() {
+  function startGame(selectedMode) {
     setBoard(createBoard())
-    setCurrentPlayer(1)
     setSelectedPiece("O")
+    setWinner(null)
+    setIsDraw(false)
+    setIsAIThinking(false)
+    setMode(selectedMode)
+    setTurn("human")
+  }
+
+  function goToMenu() {
+    setMode("menu")
+    setBoard(createBoard())
     setWinner(null)
     setIsDraw(false)
   }
 
-  function cellStyle(cell) {
-    if (cell === "O") return "border-gray-600 bg-gray-800 cursor-not-allowed text-blue-400"
-    if (cell === "X") return "border-gray-600 bg-gray-800 cursor-not-allowed text-red-400"
-    return "border-gray-500 bg-gray-800 hover:border-yellow-400 hover:bg-gray-700 text-white"
+  if (mode === "menu") {
+    return (
+      <div style={{ minHeight: "100vh", background: "#111827", color: "white", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "24px" }}>
+        <h1 style={{ fontSize: "2.5rem", fontWeight: "bold" }}>Order and Chaos</h1>
+        <p style={{ color: "#9ca3af", textAlign: "center", maxWidth: "360px" }}>
+          Order tries to get 5 in a row. Chaos tries to fill the board without letting that happen. Both players can place either X or O.
+        </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px", width: "260px" }}>
+          <button onClick={() => startGame("human")}
+            style={{ padding: "12px", background: "#2563eb", color: "white", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer", fontSize: "1rem" }}>
+            Human vs Human
+          </button>
+          <button onClick={() => startGame("ai-chaos")}
+            style={{ padding: "12px", background: "#7c3aed", color: "white", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer", fontSize: "1rem" }}>
+            Play as Order vs AI Chaos
+          </button>
+          <button onClick={() => startGame("ai-order")}
+            style={{ padding: "12px", background: "#dc2626", color: "white", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer", fontSize: "1rem" }}>
+            Play as Chaos vs AI Order
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  const statusText = () => {
+    if (winner) return winner.player === "You" ? `You win! — five ${winner.piece}s in a row` : `AI wins! — five ${winner.piece}s in a row`
+    if (isDraw) return mode === "ai-order" ? "You win! — board full, no 5 in a row!" : "AI wins! — board full, no 5 in a row!"
+    if (isAIThinking) return "AI is thinking..."
+    return "Your turn"
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex flex-col items-center justify-center gap-5 p-4">
-      <h1 className="text-3xl font-bold tracking-wide">Order and Chaos</h1>
+    <div style={{ minHeight: "100vh", background: "#111827", color: "white", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: "20px", padding: "16px" }}>
+      <h1 style={{ fontSize: "2rem", fontWeight: "bold" }}>Order and Chaos</h1>
 
-      <div className="text-base font-medium text-gray-300 h-6">
-        {winner
-          ? `Player ${winner.player} wins! — five ${winner.piece}s in a row`
-          : isDraw
-          ? "Chaos wins — board full with no 5 in a row!"
-          : `Player ${currentPlayer}'s turn`}
+      <div style={{ fontSize: "0.8rem", color: "#9ca3af" }}>
+        {mode === "human" ? "Human vs Human" : mode === "ai-chaos" ? "You (Order) vs AI (Chaos)" : "You (Chaos) vs AI (Order)"}
       </div>
 
-      {!winner && !isDraw && (
-        <div className="flex gap-4 items-center bg-gray-800 px-5 py-2 rounded-lg">
-          <span className="text-gray-400 text-sm">Place:</span>
-          <button
-            onClick={() => setSelectedPiece("O")}
-            style={{ color: selectedPiece === "O" ? "#60a5fa" : "#9ca3af" }}
-            className={`w-10 h-10 rounded-lg border-2 transition-all text-xl font-bold flex items-center justify-center
-              ${selectedPiece === "O" ? "border-yellow-400 bg-gray-700" : "border-gray-600 bg-gray-800 hover:border-gray-400"}`}
-          >
+      <div style={{ fontSize: "1rem", color: "#d1d5db", height: "24px" }}>{statusText()}</div>
+
+      {!winner && !isDraw && !isAIThinking && (
+        <div style={{ display: "flex", gap: "12px", alignItems: "center", background: "#1f2937", padding: "8px 20px", borderRadius: "8px" }}>
+          <span style={{ color: "#9ca3af", fontSize: "0.875rem" }}>Place:</span>
+          <button onClick={() => setSelectedPiece("O")}
+            style={{ width: "44px", height: "44px", borderRadius: "8px", border: `2px solid ${selectedPiece === "O" ? "#facc15" : "#4b5563"}`, background: "#1f2937", color: "#60a5fa", fontSize: "1.25rem", fontWeight: "bold", cursor: "pointer" }}>
             O
           </button>
-          <button
-            onClick={() => setSelectedPiece("X")}
-            style={{ color: selectedPiece === "X" ? "#f87171" : "#9ca3af" }}
-            className={`w-10 h-10 rounded-lg border-2 transition-all text-xl font-bold flex items-center justify-center
-              ${selectedPiece === "X" ? "border-yellow-400 bg-gray-700" : "border-gray-600 bg-gray-800 hover:border-gray-400"}`}
-          >
+          <button onClick={() => setSelectedPiece("X")}
+            style={{ width: "44px", height: "44px", borderRadius: "8px", border: `2px solid ${selectedPiece === "X" ? "#facc15" : "#4b5563"}`, background: "#1f2937", color: "#f87171", fontSize: "1.25rem", fontWeight: "bold", cursor: "pointer" }}>
             X
           </button>
         </div>
       )}
 
-      <div
-        className="bg-gray-700 p-3 rounded-xl grid gap-2"
-        style={{ gridTemplateColumns: `repeat(${COLS}, 1fr)` }}
-      >
+      <div style={{ background: "#374151", padding: "12px", borderRadius: "12px", display: "grid", gridTemplateColumns: `repeat(${COLS}, 1fr)`, gap: "6px" }}>
         {board.map((row, r) =>
           row.map((cell, c) => (
             <button
               key={`${r}-${c}`}
               onClick={() => handleCellClick(r, c)}
-              disabled={cell !== EMPTY || !!winner || isDraw}
-              className={`w-14 h-14 rounded-lg border-2 transition-all text-2xl font-bold flex items-center justify-center ${cellStyle(cell)}`}
+              disabled={cell !== EMPTY || !!winner || isDraw || isAIThinking || turn !== "human"}
+              style={{
+                width: "56px", height: "56px", borderRadius: "8px",
+                border: `2px solid ${cell !== EMPTY ? "#374151" : "#4b5563"}`,
+                background: "#1f2937",
+                color: cell === "O" ? "#60a5fa" : cell === "X" ? "#f87171" : "white",
+                fontSize: "1.5rem", fontWeight: "bold",
+                cursor: cell !== EMPTY || isAIThinking ? "not-allowed" : "pointer",
+                display: "flex", alignItems: "center", justifyContent: "center"
+              }}
             >
               {cell}
             </button>
@@ -132,19 +209,22 @@ export default function App() {
         )}
       </div>
 
-      {(winner || isDraw) && (
-        <button
-          onClick={resetGame}
-          style={{ backgroundColor: "#2563eb" }}
-          className="px-6 py-2 hover:opacity-90 font-bold rounded-lg transition-all text-white"
-        >
-          Play Again
+      <div style={{ display: "flex", gap: "12px" }}>
+        {(winner || isDraw) && (
+          <button onClick={() => startGame(mode)}
+            style={{ padding: "8px 24px", background: "#2563eb", color: "white", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer" }}>
+            Play Again
+          </button>
+        )}
+        <button onClick={goToMenu}
+          style={{ padding: "8px 24px", background: "#374151", color: "white", fontWeight: "bold", borderRadius: "8px", border: "none", cursor: "pointer" }}>
+          Menu
         </button>
-      )}
+      </div>
 
-      <div className="text-xs text-gray-500 text-center max-w-sm">
+      <div style={{ fontSize: "0.75rem", color: "#6b7280", textAlign: "center", maxWidth: "360px" }}>
         <p>Order gets 5 in a row (X or O) to win. Chaos fills the board to win.</p>
-        <p className="mt-1">Both players can place either X or O each turn.</p>
+        <p style={{ marginTop: "4px" }}>Both players can place either X or O each turn.</p>
       </div>
     </div>
   )
